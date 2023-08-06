@@ -19,10 +19,13 @@ import (
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
 	"github.com/pkg/errors"
+	"golang.org/x/exp/slices"
 	"golang.org/x/net/http/httpguts"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apiserver/pkg/authentication/serviceaccount"
+	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -35,6 +38,7 @@ import (
 	"github.com/clastix/capsule-proxy/internal/modules/lease"
 	"github.com/clastix/capsule-proxy/internal/modules/metric"
 	"github.com/clastix/capsule-proxy/internal/modules/namespace"
+	"github.com/clastix/capsule-proxy/internal/modules/namespaced"
 	"github.com/clastix/capsule-proxy/internal/modules/node"
 	"github.com/clastix/capsule-proxy/internal/modules/pod"
 	"github.com/clastix/capsule-proxy/internal/modules/priorityclass"
@@ -223,6 +227,38 @@ func (n kubeFilter) registerModules(ctx context.Context, root *mux.Router) {
 		metric.List(n.client),
 		pod.Get(n.client),
 	}
+
+	config := ctrl.GetConfigOrDie()
+	discoveryClient := discovery.NewDiscoveryClientForConfigOrDie(config)
+
+	// Get all API group resources
+	apiResourceLists, err := discoveryClient.ServerPreferredResources()
+	if err != nil {
+		panic(err.Error())
+	}
+
+	for _, list := range apiResourceLists {
+		for _, resource := range list.APIResources {
+			if resource.Namespaced && slices.Contains(resource.Verbs, "list") {
+				//modList = append(modList, namespaced.List(resource, n.client))
+				groupVer := list.GroupVersion
+				parts := strings.SplitN(groupVer, "/", 2)
+				group := ""
+				version := parts[0]
+				if len(parts) > 1 {
+					group = parts[0]
+					version = parts[1]
+				}
+
+				modList = append(modList, namespaced.List(schema.GroupVersionKind{
+					Group:   group,
+					Version: version,
+					Kind:    resource.Name,
+				}, n.client))
+			}
+		}
+	}
+
 	for _, i := range modList {
 		mod := i
 		rp := root.Path(mod.Path())

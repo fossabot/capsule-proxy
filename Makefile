@@ -6,6 +6,13 @@ else
 	ROOTCA=~/.local/share/mkcert/rootCA.pem
 endif
 
+# Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
+ifeq (,$(shell go env GOBIN))
+GOBIN=$(shell go env GOPATH)/bin
+else
+GOBIN=$(shell go env GOBIN)
+endif
+
 dlv-build:
 	docker build . --build-arg "GCFLAGS=all=-N -l" --tag clastix/capsule-proxy:dlv --target dlv
 
@@ -25,7 +32,10 @@ kind:
 		&& kubectl taint nodes capsule-worker2 key1=value1:NoSchedule
 	@helm repo add bitnami https://charts.bitnami.com/bitnami
 	@helm upgrade --install --namespace metrics-system --create-namespace metrics-server bitnami/metrics-server \
-		--set apiService.create=true --set extraArgs.kubelet-insecure-tls=true --version 5.11.7
+		--set apiService.create=true --set "extraArgs[0]=--kubelet-insecure-tls=true" --version 6.2.9
+	@echo "Waiting for metrics-server pod to be ready for listing metrics"
+	@kubectl --namespace metrics-system wait --for=condition=ready --timeout=320s pod -l app.kubernetes.io/instance=metrics-server
+
 
 capsule:
 	@echo "Installing capsule..."
@@ -37,7 +47,7 @@ capsule:
 		--set "options.logLevel=8"
 
 
-capsule-proxy:
+capsule-proxy: mkcert docker/build
 	@echo "Installing Capsule-Proxy..."
 	@echo "Loading Docker image..."
 	@kind load docker-image --name capsule --nodes capsule-worker clastix/capsule-proxy:latest
@@ -62,7 +72,7 @@ ifeq ($(CAPSULE_PROXY_MODE),http)
 else
 	@echo "Running in HTTPS mode"
 	@echo "capsule proxy certificates..."
-	cd hack && mkcert -install && mkcert 127.0.0.1 \
+	cd hack && $(MKCERT) -install && $(MKCERT) 127.0.0.1 \
 		&& kubectl --namespace capsule-system create secret tls capsule-proxy --key=./127.0.0.1-key.pem --cert ./127.0.0.1.pem
 	@echo "kubeconfig configurations..."
 	@cd hack \
@@ -92,6 +102,8 @@ else
 		--set "daemonset.hostNetwork=true" \
 		--set "serviceMonitor.enabled=false"
 endif
+
+dev-setup: kind capsule capsule-proxy
 
 rbac-fix:
 	@echo "RBAC customization..."
@@ -139,18 +151,18 @@ uninstall: manifests ## Uninstall CRDs from the K8s cluster specified in ~/.kube
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 .PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
-	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.8.0)
+	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.8.0)
 
-# go-get-tool will 'go get' any package $2 and install it to $1.
+MKCERT = $(shell pwd)/bin/mkcert
+mkcert: ## Download mkcert locally if necessary.
+	$(call go-install-tool,$(MKCERT),filippo.io/mkcert@v1.4.4)
+
+# go-install-tool will 'go install' any package $2 and install it to $1.
 PROJECT_DIR := $(shell dirname $(abspath $(lastword $(MAKEFILE_LIST))))
-define go-get-tool
+define go-install-tool
 @[ -f $(1) ] || { \
 set -e ;\
-TMP_DIR=$$(mktemp -d) ;\
-cd $$TMP_DIR ;\
-go mod init tmp ;\
-echo "Downloading $(2)" ;\
-GOBIN=$(PROJECT_DIR)/bin go get $(2) ;\
-rm -rf $$TMP_DIR ;\
+echo "Installing $(2)" ;\
+GOBIN=$(PROJECT_DIR)/bin go install $(2) ;\
 }
 endef
