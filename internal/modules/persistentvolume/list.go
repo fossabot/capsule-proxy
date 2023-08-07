@@ -1,14 +1,14 @@
 // Copyright 2020-2021 Clastix Labs
 // SPDX-License-Identifier: Apache-2.0
 
-package metric
+package persistentvolume
 
 import (
+	capsulev1beta2 "github.com/clastix/capsule/api/v1beta2"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/selection"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -20,24 +20,28 @@ import (
 )
 
 type list struct {
-	client client.Reader
-	log    logr.Logger
-	gk     schema.GroupKind
+	client   client.Reader
+	log      logr.Logger
+	labelKey string
+	gk       schema.GroupKind
 }
 
 func List(client client.Reader) modules.Module {
+	label, _ := capsulev1beta2.GetTypeLabel(&capsulev1beta2.Tenant{})
+
 	return &list{
-		client: client,
-		log:    ctrl.Log.WithName("metric_list"),
+		client:   client,
+		log:      ctrl.Log.WithName("persistentvolume_list"),
+		labelKey: label,
 		gk: schema.GroupKind{
 			Group: corev1.GroupName,
-			Kind:  "nodes",
+			Kind:  "persistentvolumes",
 		},
 	}
 }
 
 func (l list) Path() string {
-	return "/apis/metrics.k8s.io/{version}/{endpoint:nodes/?}"
+	return "/api/v1/{endpoint:persistentvolumes/?}"
 }
 
 func (l list) Methods() []string {
@@ -47,17 +51,10 @@ func (l list) Methods() []string {
 func (l list) Handle(proxyTenants []*tenant.ProxyTenant, proxyRequest request.Request) (selector labels.Selector, err error) {
 	httpRequest := proxyRequest.GetHTTPRequest()
 
-	selectors := utils.GetNodeSelectors(httpRequest, proxyTenants)
-
-	nl := &corev1.NodeList{}
-	if err = l.client.List(httpRequest.Context(), nl); err != nil {
-		return nil, errors.NewBadRequest(err, l.gk)
+	allowed, requirement := getPersistentVolume(httpRequest, proxyTenants, l.labelKey)
+	if !allowed {
+		return nil, errors.NewNotAllowed(l.gk)
 	}
 
-	var r *labels.Requirement
-	if r, err = utils.GetNodeSelector(nl, selectors); err != nil {
-		r, _ = labels.NewRequirement("dontexistsignoreme", selection.Exists, []string{})
-	}
-
-	return labels.NewSelector().Add(*r), nil
+	return utils.HandleListSelector([]labels.Requirement{requirement})
 }

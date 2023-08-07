@@ -2,21 +2,16 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: "{{ .Release.Name }}-certgen"
+  name: {{ include "capsule-proxy.fullname" . }}-certgen
   labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
-    app.kubernetes.io/instance: {{ .Release.Name | quote }}
-    app.kubernetes.io/version: {{ .Chart.AppVersion }}
-    helm.sh/chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+    {{- include "capsule-proxy.labels" . | nindent 4 }}
 spec:
   ttlSecondsAfterFinished: 60
   template:
     metadata:
-      name: "{{ .Release.Name }}-certgen"
+      name: {{ include "capsule-proxy.fullname" . }}-certgen
       labels:
-        app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
-        app.kubernetes.io/instance: {{ .Release.Name | quote }}
-        helm.sh/chart: "{{ .Chart.Name }}-{{ .Chart.Version }}"
+        {{- include "capsule-proxy.selectorLabels" . | nindent 8 }}
     spec:
       restartPolicy: Never
       {{- with $.Values.jobs.podSecurityContext }}
@@ -29,7 +24,7 @@ spec:
         imagePullPolicy: {{ .Values.jobs.certs.pullPolicy }}
         args:
             - create
-            - --host={{ include "capsule-proxy.fullname" . }}.{{.Release.Namespace}}.svc,{{ include "capsule-proxy.fullname" . }}
+            - --host={{ include "capsule-proxy.certJob.SAN" . }}
             - --namespace=$(NAMESPACE)
             - --secret-name={{ include "capsule-proxy.fullname" . }}
             - --cert-name={{ .Values.options.SSLCertFileName }}
@@ -43,5 +38,9 @@ spec:
         securityContext:
           {{- toYaml . | nindent 10 }}
         {{- end }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}        
       serviceAccountName: {{ include "capsule-proxy.serviceAccountName" . }}
 {{- end }}

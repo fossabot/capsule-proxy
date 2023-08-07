@@ -4,12 +4,10 @@
 package middleware
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strings"
 
-	"github.com/go-logr/logr"
 	"github.com/gorilla/mux"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,7 +16,7 @@ import (
 	"github.com/clastix/capsule-proxy/internal/webserver/errors"
 )
 
-func CheckJWTMiddleware(client client.Client, log logr.Logger) mux.MiddlewareFunc {
+func CheckJWTMiddleware(client client.Writer) mux.MiddlewareFunc {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			var err error
@@ -35,7 +33,7 @@ func CheckJWTMiddleware(client client.Client, log logr.Logger) mux.MiddlewareFun
 						Token: token,
 					},
 				}
-				if err = client.Create(context.Background(), &tr); err != nil {
+				if err = client.Create(request.Context(), &tr); err != nil {
 					errors.HandleError(writer, err, "cannot create TokenReview")
 				}
 				if statusErr := tr.Status.Error; len(statusErr) > 0 {

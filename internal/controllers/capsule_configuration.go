@@ -5,8 +5,11 @@ package controllers
 
 import (
 	"context"
+	"fmt"
 
-	capsulev1alpha1 "github.com/clastix/capsule/api/v1alpha1"
+	capsulev1beta2 "github.com/clastix/capsule/api/v1beta2"
+	"github.com/pkg/errors"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -22,25 +25,33 @@ type CapsuleConfiguration struct {
 	DeprecatedCapsuleUserGroups []string
 }
 
-// nolint
+//nolint
 var CapsuleUserGroups sets.String
 
-func (c *CapsuleConfiguration) SetupWithManager(mgr ctrl.Manager) error {
+func (c *CapsuleConfiguration) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
 	if len(c.DeprecatedCapsuleUserGroups) > 0 {
 		CapsuleUserGroups = sets.NewString(c.DeprecatedCapsuleUserGroups...)
 
 		return nil
 	}
 
+	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: c.CapsuleConfigurationName}, &capsulev1beta2.CapsuleConfiguration{}); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return fmt.Errorf("CapsuleConfiguration %s does not exist", c.CapsuleConfigurationName)
+		}
+
+		return errors.Wrap(err, "unable to retrieve CapsuleConfiguration")
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&capsulev1alpha1.CapsuleConfiguration{}, builder.WithPredicates(predicate.NewPredicateFuncs(func(object client.Object) bool {
+		For(&capsulev1beta2.CapsuleConfiguration{}, builder.WithPredicates(predicate.NewPredicateFuncs(func(object client.Object) bool {
 			return object.GetName() == c.CapsuleConfigurationName
 		}))).
 		Complete(c)
 }
 
 func (c *CapsuleConfiguration) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
-	capsuleConfig := &capsulev1alpha1.CapsuleConfiguration{}
+	capsuleConfig := &capsulev1beta2.CapsuleConfiguration{}
 
 	if err := c.client.Get(ctx, types.NamespacedName{Name: request.Name}, capsuleConfig); err != nil {
 		panic(err)

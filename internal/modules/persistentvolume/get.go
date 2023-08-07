@@ -1,11 +1,10 @@
 // Copyright 2020-2021 Clastix Labs
 // SPDX-License-Identifier: Apache-2.0
 
-package node
+package persistentvolume
 
 import (
-	"net/http"
-
+	capsulev1beta2 "github.com/clastix/capsule/api/v1beta2"
 	"github.com/go-logr/logr"
 	"github.com/gorilla/mux"
 	corev1 "k8s.io/api/core/v1"
@@ -15,31 +14,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/clastix/capsule-proxy/internal/modules"
-	"github.com/clastix/capsule-proxy/internal/modules/errors"
 	"github.com/clastix/capsule-proxy/internal/modules/utils"
 	"github.com/clastix/capsule-proxy/internal/request"
 	"github.com/clastix/capsule-proxy/internal/tenant"
 )
 
 type get struct {
-	client client.Reader
-	log    logr.Logger
-	gk     schema.GroupKind
+	client   client.Reader
+	log      logr.Logger
+	labelKey string
+	gk       schema.GroupKind
 }
 
 func Get(client client.Reader) modules.Module {
+	label, _ := capsulev1beta2.GetTypeLabel(&capsulev1beta2.Tenant{})
+
 	return &get{
-		client: client,
-		log:    ctrl.Log.WithName("node_get"),
+		client:   client,
+		log:      ctrl.Log.WithName("persistentvolume_get"),
+		labelKey: label,
 		gk: schema.GroupKind{
 			Group: corev1.GroupName,
-			Kind:  "nodes",
+			Kind:  "persistentvolumes",
 		},
 	}
 }
 
 func (g get) Path() string {
-	return "/api/v1/nodes/{name}"
+	return "/api/v1/{endpoint:persistentvolumes}/{name}"
 }
 
 func (g get) Methods() []string {
@@ -48,24 +50,12 @@ func (g get) Methods() []string {
 
 func (g get) Handle(proxyTenants []*tenant.ProxyTenant, proxyRequest request.Request) (selector labels.Selector, err error) {
 	httpRequest := proxyRequest.GetHTTPRequest()
-	selectors := utils.GetNodeSelectors(httpRequest, proxyTenants)
 
 	name := mux.Vars(httpRequest)["name"]
 
-	nl := &corev1.NodeList{}
-	if err = g.client.List(httpRequest.Context(), nl, client.MatchingLabels{"kubernetes.io/hostname": name}); err != nil {
-		return nil, errors.NewBadRequest(err, g.gk)
-	}
+	_, requirement := getPersistentVolume(httpRequest, proxyTenants, g.labelKey)
 
-	var r *labels.Requirement
+	rc := &corev1.PersistentVolume{}
 
-	if r, err = utils.GetNodeSelector(nl, selectors); err == nil {
-		return labels.NewSelector().Add(*r), nil
-	}
-
-	if httpRequest.Method == http.MethodGet {
-		return nil, errors.NewNotFoundError(name, g.gk)
-	}
-
-	return nil, nil
+	return utils.HandleGetSelector(httpRequest.Context(), rc, g.client, []labels.Requirement{requirement}, name, g.gk)
 }

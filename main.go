@@ -11,54 +11,65 @@ import (
 
 	capsulev1alpha1 "github.com/clastix/capsule/api/v1alpha1"
 	capsulev1beta1 "github.com/clastix/capsule/api/v1beta1"
+	capsulev1beta2 "github.com/clastix/capsule/api/v1beta2"
 	capsuleindexer "github.com/clastix/capsule/pkg/indexer"
 	"github.com/clastix/capsule/pkg/indexer/tenant"
 	flag "github.com/spf13/pflag"
+	"github.com/thediveo/enumflag"
 	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	capsuleproxyv1beta1 "github.com/clastix/capsule-proxy/api/v1beta1"
 	"github.com/clastix/capsule-proxy/internal/controllers"
 	"github.com/clastix/capsule-proxy/internal/indexer"
 	"github.com/clastix/capsule-proxy/internal/options"
+	"github.com/clastix/capsule-proxy/internal/request"
 	"github.com/clastix/capsule-proxy/internal/webserver"
 )
 
-// nolint:funlen,cyclop
+//nolint:funlen,cyclop
 func main() {
 	scheme := runtime.NewScheme()
 	log := ctrl.Log.WithName("main")
 
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-	utilruntime.Must(capsulev1beta1.AddToScheme(scheme))
 	utilruntime.Must(capsulev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(capsulev1beta1.AddToScheme(scheme))
+	utilruntime.Must(capsulev1beta2.AddToScheme(scheme))
 	utilruntime.Must(capsuleproxyv1beta1.AddToScheme(scheme))
 
 	var err error
 
 	var mgr ctrl.Manager
 
-	var capsuleConfigurationName string
+	var certPath, keyPath, usernameClaimField, capsuleConfigurationName string
 
-	var capsuleUserGroups []string
-
-	var ignoredUserGroups []string
+	var capsuleUserGroups, ignoredUserGroups []string
 
 	var listeningPort uint
 
-	var usernameClaimField string
-
-	var bindSsl bool
-
-	var certPath string
-
-	var keyPath string
+	var bindSsl, disableCaching bool
 
 	var rolebindingsResyncPeriod time.Duration
+
+	var clientConnectionQPS float32
+
+	var clientConnectionBurst int32
+
+	authTypes := []request.AuthType{
+		request.TLSCertificate,
+		request.BearerToken,
+	}
+
+	authTypesMap := map[request.AuthType][]string{
+		request.BearerToken:    {request.BearerToken.String()},
+		request.TLSCertificate: {request.TLSCertificate.String()},
+	}
 
 	flag.StringVar(&capsuleConfigurationName, "capsule-configuration-name", "default", "Name of the CapsuleConfiguration used to retrieve the Capsule user groups names")
 	flag.StringSliceVar(&capsuleUserGroups, "capsule-user-group", []string{}, "Names of the groups for capsule users (deprecated: use capsule-configuration-name)")
@@ -69,6 +80,12 @@ func main() {
 	flag.StringVar(&certPath, "ssl-cert-path", "", "Path to the TLS certificate (default: /opt/capsule-proxy/tls.crt)")
 	flag.StringVar(&keyPath, "ssl-key-path", "", "Path to the TLS certificate key (default: /opt/capsule-proxy/tls.key)")
 	flag.DurationVar(&rolebindingsResyncPeriod, "rolebindings-resync-period", 10*time.Hour, "Resync period for rolebindings reflector")
+	flag.Var(enumflag.NewSlice(&authTypes, "string", authTypesMap, enumflag.EnumCaseSensitive), "auth-preferred-types",
+		`Authentication types to be used for requests. Possible Auth Types: [BearerToken, TLSCertificate]
+First match is used and can be specified multiple times as comma separated values or by using the flag multiple times.`)
+	flag.BoolVar(&disableCaching, "disable-caching", false, "Disable the go-client caching to hit directly the Kubernetes API Server, it disables any local caching as the rolebinding reflector (default: false)")
+	flag.Float32Var(&clientConnectionQPS, "client-connection-qps", 20.0, "QPS to use for interacting with kubernetes apiserver.")
+	flag.Int32Var(&clientConnectionBurst, "client-connection-burst", 30, "Burst to use for interacting with kubernetes apiserver.")
 
 	opts := zap.Options{
 		EncoderConfigOptions: append([]zap.EncoderConfigOption{}, func(config *zapcore.EncoderConfig) {
@@ -111,7 +128,11 @@ func main() {
 	log.Info("---")
 	log.Info("Creating the manager")
 
-	mgr, err = ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	config := ctrl.GetConfigOrDie()
+	config.QPS = clientConnectionQPS
+	config.Burst = int(clientConnectionBurst)
+
+	mgr, err = ctrl.NewManager(config, ctrl.Options{
 		Scheme:                 scheme,
 		HealthProbeBindAddress: ":8081",
 	})
@@ -120,19 +141,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info("Creating the Rolebindings reflector")
+	var rbReflector *controllers.RoleBindingReflector
 
-	rbReflector, err := controllers.NewRoleBindingReflector(ctrl.GetConfigOrDie(), rolebindingsResyncPeriod)
-	if err != nil {
-		log.Error(err, "cannot create Rolebindings reflector")
-		os.Exit(1)
-	}
+	if !disableCaching {
+		log.Info("Creating the Rolebindings reflector")
 
-	log.Info("Adding the Rolebindings reflector to the Manager")
+		if rbReflector, err = controllers.NewRoleBindingReflector(config, rolebindingsResyncPeriod); err != nil {
+			log.Error(err, "cannot create Rolebindings reflector")
+			os.Exit(1)
+		}
 
-	if err = mgr.Add(rbReflector); err != nil {
-		log.Error(err, "cannot add Rolebindings reflector as Runnable")
-		os.Exit(1)
+		log.Info("Adding the Rolebindings reflector to the Manager")
+
+		if err = mgr.Add(rbReflector); err != nil {
+			log.Error(err, "cannot add Rolebindings reflector as Runnable")
+			os.Exit(1)
+		}
+	} else {
+		log.Info("Cache is disabled, cannot create Rolebindings reflector")
 	}
 
 	ctx := ctrl.SetupSignalHandler()
@@ -140,7 +166,7 @@ func main() {
 	log.Info("Creating the Field Indexer")
 
 	indexers := []capsuleindexer.CustomIndexer{
-		&tenant.NamespacesReference{},
+		&tenant.NamespacesReference{Obj: &capsulev1beta2.Tenant{}},
 		&tenant.OwnerReference{},
 		&indexer.ProxySetting{},
 	}
@@ -158,19 +184,25 @@ func main() {
 
 	var listenerOpts options.ListenerOpts
 
-	if listenerOpts, err = options.NewKube(ignoredUserGroups, usernameClaimField, ctrl.GetConfigOrDie()); err != nil {
+	if listenerOpts, err = options.NewKube(authTypes, ignoredUserGroups, usernameClaimField, config); err != nil {
 		log.Error(err, "cannot create Kubernetes options")
 		os.Exit(1)
 	}
 
 	var serverOpts options.ServerOptions
 
-	if serverOpts, err = options.NewServer(bindSsl, listeningPort, certPath, keyPath, ctrl.GetConfigOrDie()); err != nil {
+	if serverOpts, err = options.NewServer(bindSsl, listeningPort, certPath, keyPath, config); err != nil {
 		log.Error(err, "cannot create Kubernetes options")
 		os.Exit(1)
 	}
 
-	r, err = webserver.NewKubeFilter(listenerOpts, serverOpts, rbReflector)
+	var clientOverride client.Reader
+
+	if !disableCaching {
+		clientOverride = mgr.GetAPIReader()
+	}
+
+	r, err = webserver.NewKubeFilter(listenerOpts, serverOpts, rbReflector, clientOverride)
 	if err != nil {
 		log.Error(err, "cannot create NamespaceFilter runner")
 		os.Exit(1)
@@ -181,7 +213,7 @@ func main() {
 	if err = (&controllers.CapsuleConfiguration{
 		CapsuleConfigurationName:    capsuleConfigurationName,
 		DeprecatedCapsuleUserGroups: capsuleUserGroups,
-	}).SetupWithManager(mgr); err != nil {
+	}).SetupWithManager(ctx, mgr); err != nil {
 		log.Error(err, "cannot start CapsuleConfiguration controller for User Group list retrieval")
 		os.Exit(1)
 	}

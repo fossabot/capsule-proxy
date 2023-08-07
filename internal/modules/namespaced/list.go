@@ -18,12 +18,12 @@ import (
 )
 
 type list struct {
-	client client.Client
+	client client.Reader
 	log    logr.Logger
 	gk     schema.GroupVersionKind
 }
 
-func List(resource schema.GroupVersionKind, client client.Client) modules.Module {
+func List(resource schema.GroupVersionKind, client client.Reader) modules.Module {
 
 	return &list{
 		client: client,

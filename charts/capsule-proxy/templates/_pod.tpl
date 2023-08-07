@@ -28,7 +28,7 @@ spec:
   volumes:
   - name: certs
     secret:
-      secretName: {{ include "capsule-proxy.fullname" . }}
+      secretName: {{ .Values.options.certificateVolumeName | default  (include "capsule-proxy.fullname" .) }}
       defaultMode: 420
   {{- end }}
   {{- with .Values.topologySpreadConstraints }}
@@ -50,10 +50,14 @@ spec:
     - --enable-ssl={{ .Values.options.enableSSL }}
     - --oidc-username-claim={{ .Values.options.oidcUsernameClaim }}
     - --rolebindings-resync-period={{ .Values.options.rolebindingsResyncPeriod }}
+    - --disable-caching={{ .Values.options.disableCaching }}
+    - --auth-preferred-types={{ .Values.options.authPreferredTypes }}
     {{- if .Values.options.enableSSL }}
     - --ssl-cert-path={{ .Values.options.SSLDirectory }}/{{ .Values.options.SSLCertFileName }}
     - --ssl-key-path={{ .Values.options.SSLDirectory }}/{{ .Values.options.SSLKeyFileName }}
     {{- end }}
+    - --client-connection-qps={{ .Values.options.clientConnectionQPS }}
+    - --client-connection-burst={{ .Values.options.clientConnectionBurst }}
     ports:
     - name: proxy
       protocol: TCP

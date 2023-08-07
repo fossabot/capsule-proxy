@@ -61,9 +61,9 @@ If you only need to make minor customizations, you can specify them on the comma
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | affinity | object | `{}` | Set affinity rules for the capsule-proxy pod. |
-| certManager.externalCA.enabled | bool | `false` |  |
+| certManager.externalCA.enabled | bool | `false` | Set if want cert manager to sign certificates with an external CA |
 | certManager.externalCA.secretName | string | `""` |  |
-| certManager.generateCertificates | bool | `false` | Set if the cert manager will generate self-signed SSL certificates |
+| certManager.generateCertificates | bool | `false` | Set if the cert manager will generate SSL certificates (self-signed or CA-signed) |
 | certManager.issuer.kind | string | `"Issuer"` | Set if the cert manager will generate either self-signed or CA signed SSL certificates. Its value will be either Issuer or ClusterIssuer |
 | certManager.issuer.name | string | `""` | Set the name of the ClusterIssuer if issuer kind is ClusterIssuer and if cert manager will generate CA signed SSL certificates |
 | daemonset.hostNetwork | bool | `false` | Use the host network namespace for capsule-proxy pod. |
@@ -103,7 +103,13 @@ If you only need to make minor customizations, you can specify them on the comma
 | options.SSLCertFileName | string | `"tls.crt"` | Set the name of SSL certificate file |
 | options.SSLDirectory | string | `"/opt/capsule-proxy"` | Set the directory, where SSL certificate and keyfile will be located |
 | options.SSLKeyFileName | string | `"tls.key"` | Set the name of SSL key file |
+| options.additionalSANs | list | `[]` | Specify additional subject alternative names for the self-signed SSL |
+| options.authPreferredTypes | string | `"BearerToken,TLSCertificate"` | Authentication types to be used for requests. Possible Auth Types: [BearerToken, TLSCertificate] |
 | options.capsuleConfigurationName | string | `"default"` | Name of the CapsuleConfiguration custom resource used by Capsule, required to identify the user groups |
+| options.certificateVolumeName | string | `""` | Specify an override for the Secret containing the certificate for SSL. Default value is empty and referring to the generated certificate. |
+| options.clientConnectionBurst | int | `30` | Burst to use for interacting with kubernetes API Server. |
+| options.clientConnectionQPS | int | `20` | QPS to use for interacting with Kubernetes API Server. |
+| options.disableCaching | bool | `false` | Disable the go-client caching to hit directly the Kubernetes API Server, it disables any local caching as the rolebinding reflector |
 | options.enableSSL | bool | `true` | Specify if capsule-proxy will use SSL |
 | options.generateCertificates | bool | `true` | Specify if capsule-proxy will generate self-signed SSL certificates |
 | options.ignoredUserGroups | list | `[]` | Define which groups must be ignored while proxying requests |

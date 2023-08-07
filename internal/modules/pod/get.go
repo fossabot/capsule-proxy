@@ -4,13 +4,11 @@
 package pod
 
 import (
-	"context"
-
-	capsulev1beta1 "github.com/clastix/capsule/api/v1beta1"
+	capsulev1beta2 "github.com/clastix/capsule/api/v1beta2"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -24,12 +22,20 @@ import (
 // get is the module that is going to be used when a `kubectl describe node` is issued by a Tenant owner.
 // No other verbs are considered here, just the listing of Pods for the given node.
 type get struct {
-	client client.Client
+	client client.Reader
 	log    logr.Logger
+	gk     schema.GroupKind
 }
 
-func Get(client client.Client) modules.Module {
-	return &get{client: client, log: ctrl.Log.WithName("node_get")}
+func Get(client client.Reader) modules.Module {
+	return &get{
+		client: client,
+		log:    ctrl.Log.WithName("node_get"),
+		gk: schema.GroupKind{
+			Group: corev1.GroupName,
+			Kind:  "nodes",
+		},
+	}
 }
 
 func (g get) Path() string {
@@ -76,14 +82,14 @@ func (g get) Handle(proxyTenants []*tenant.ProxyTenant, proxyRequest request.Req
 	var selectors []map[string]string
 	// Ensuring the Tenant Owner can deal with the node listing
 	for _, pt := range proxyTenants {
-		if ok = pt.RequestAllowed(httpRequest, capsulev1beta1.NodesProxy); ok {
+		if ok = pt.RequestAllowed(httpRequest, capsulev1beta2.NodesProxy); ok {
 			selectors = append(selectors, pt.Tenant.Spec.NodeSelector)
 		}
 	}
 
 	node := &corev1.Node{}
-	if err = g.client.Get(context.Background(), types.NamespacedName{Name: name}, node); err != nil {
-		return nil, errors.NewBadRequest(err, &metav1.StatusDetails{Kind: "nodes"})
+	if err = g.client.Get(httpRequest.Context(), types.NamespacedName{Name: name}, node); err != nil {
+		return nil, errors.NewBadRequest(err, g.gk)
 	}
 
 	for _, sel := range selectors {

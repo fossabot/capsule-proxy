@@ -26,11 +26,13 @@ jobs:
   kind:
     name: Kubernetes
     strategy:
+      fail-fast: false
       matrix:
         k8s-version: [ 'v1.16.15', 'v1.17.11', 'v1.18.8', 'v1.19.4', 'v1.20.7', 'v1.21.2', 'v1.22.0' ]
         capsule-proxy-mode: [ 'https', 'http' ]
         test-clients: [ 'kubectl', 'curl' ]
     runs-on: ubuntu-18.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v2
         with:
@@ -42,12 +44,6 @@ jobs:
       - uses: azure/setup-helm@v1
         with:
           version: 3.3.4
-      - name: Installing mkcert
-        run: |
-          wget https://github.com/FiloSottile/mkcert/releases/download/v1.1.2/mkcert-v1.1.2-linux-amd64
-          mv mkcert-v1.1.2-linux-amd64 mkcert
-          chmod +x mkcert
-          sudo cp mkcert /usr/local/bin/
       - name: Installing BATS
         run: sudo apt-get install -y bats
       - name: Installing jq

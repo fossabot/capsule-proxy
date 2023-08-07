@@ -20,7 +20,7 @@ dev-setup: kind capsule capsule-proxy
 
 docker/build:
 	@echo "Building docker image..."
-	@docker build . -t clastix/capsule-proxy:latest
+	@docker build . --build-arg "LDFLAGS=-s -w" -t clastix/capsule-proxy:latest
 
 kind/clean:
 	@echo "Deleting cluser..."
@@ -37,10 +37,8 @@ kind:
 	@echo "Waiting for metrics-server pod to be ready for listing metrics"
 	@kubectl --namespace metrics-system wait --for=condition=ready --timeout=320s pod -l app.kubernetes.io/instance=metrics-server
 
-
 capsule:
 	@echo "Installing capsule..."
-	@sleep 5
 	@helm repo add clastix https://clastix.github.io/charts
 	@helm upgrade --install --create-namespace --namespace capsule-system capsule clastix/capsule \
 		--set "manager.resources=null" \
@@ -86,8 +84,8 @@ endif
 
 kubeconfigs:
 	@echo "capsule proxy certificates..."
-	cd hack && $(MKCERT) -install && $(MKCERT) 127.0.0.1 \
-		&& kubectl --namespace capsule-system create secret tls capsule-proxy --key=./127.0.0.1-key.pem --cert ./127.0.0.1.pem
+	cd hack && $(MKCERT) -install && $(MKCERT) 127.0.0.1  \
+		&& kubectl --namespace capsule-system create secret generic capsule-proxy --from-file=tls.key=./127.0.0.1-key.pem --from-file=tls.crt=./127.0.0.1.pem --from-literal=ca=$$(cat $(ROOTCA) | base64 |tr -d '\n')
 	@echo "kubeconfig configurations..."
 	@cd hack \
 		&& curl -s https://raw.githubusercontent.com/clastix/capsule/master/hack/create-user.sh | bash -s -- alice oil capsule.clastix.io \
@@ -126,7 +124,7 @@ helm-docs: docker
 	@docker run -v "$(SRC_ROOT):/helm-docs" jnorwood/helm-docs:$(HELMDOCS_VERSION) --chart-search-root /helm-docs
 
 helm-lint: docker
-	@docker run -v "$(SRC_ROOT):/workdir" --entrypoint /bin/sh quay.io/helmpack/chart-testing:v3.3.1 -c cd /workdir && ct lint --config .github/configs/ct.yaml --lint-conf .github/configs/lintconf.yaml --all --debug
+	@docker run -v "$(SRC_ROOT):/workdir" --entrypoint /bin/sh quay.io/helmpack/chart-testing:v3.3.1 -c "cd /workdir; ct lint --config .github/configs/ct.yaml --lint-conf .github/configs/lintconf.yaml --all --debug"
 
 docker:
 	@hash docker 2>/dev/null || {\
@@ -142,6 +140,9 @@ manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and Cust
 generate: controller-gen ## Generate code containing DeepCopy, DeepCopyInto, and DeepCopyObject method implementations.
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
+golint: golangci-lint ## Linting the code according to the styling guide.
+	$(GOLANGCI_LINT) run -c .golangci.yml
+
 .PHONY: install
 install: manifests ## Install CRDs into the K8s cluster specified in ~/.kube/config.
 	kubectl apply -f charts/capsule-proxy/crds
@@ -151,7 +152,6 @@ uninstall: manifests ## Uninstall CRDs from the K8s cluster specified in ~/.kube
 	kubectl delete -f charts/capsule-proxy/crds
 
 CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
-.PHONY: controller-gen
 controller-gen: ## Download controller-gen locally if necessary.
 	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.8.0)
 
@@ -168,3 +168,7 @@ echo "Installing $(2)" ;\
 GOBIN=$(PROJECT_DIR)/bin go install $(2) ;\
 }
 endef
+
+GOLANGCI_LINT = $(shell pwd)/bin/golangci-lint
+golangci-lint: ## Download golangci-lint locally if necessary.
+	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint@v1.51.2)

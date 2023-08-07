@@ -4,7 +4,6 @@
 package request
 
 import (
-	"context"
 	"fmt"
 	h "net/http"
 	"strings"
@@ -15,22 +14,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type authType int
-
-const (
-	bearerBased authType = iota
-	certificateBased
-	anonymousBased
-)
-
 type http struct {
 	*h.Request
+	authTypes          []AuthType
 	usernameClaimField string
-	client             client.Client
+	client             client.Writer
 }
 
-func NewHTTP(request *h.Request, usernameClaimField string, client client.Client) Request {
-	return &http{Request: request, usernameClaimField: usernameClaimField, client: client}
+func NewHTTP(request *h.Request, authTypes []AuthType, usernameClaimField string, client client.Writer) Request {
+	return &http{Request: request, authTypes: authTypes, usernameClaimField: usernameClaimField, client: client}
 }
 
 func (h http) GetHTTPRequest() *h.Request {
@@ -39,18 +31,12 @@ func (h http) GetHTTPRequest() *h.Request {
 
 //nolint:funlen
 func (h http) GetUserAndGroups() (username string, groups []string, err error) {
-	switch h.getAuthType() {
-	case certificateBased:
-		pc := h.TLS.PeerCertificates
-		if len(pc) == 0 {
-			return "", nil, fmt.Errorf("no provided peer certificates")
+	for _, fn := range h.authenticationFns() {
+		// User authentication data is extracted according to the preferred order:
+		// in case of first match blocking the iteration
+		if username, groups, err = fn(); err == nil {
+			break
 		}
-
-		username, groups = pc[0].Subject.CommonName, pc[0].Subject.Organization
-	case bearerBased:
-		username, groups, err = h.processBearerToken()
-	case anonymousBased:
-		return "", nil, fmt.Errorf("capsule does not support unauthenticated users")
 	}
 	// In case of error, we're blocking the request flow here
 	if err != nil {
@@ -58,7 +44,7 @@ func (h http) GetUserAndGroups() (username string, groups []string, err error) {
 	}
 	// In case the requester is asking for impersonation, we have to be sure that's allowed by creating a
 	// SubjectAccessReview with the requested data, before proceeding.
-	if impersonateUser := h.Request.Header.Get("Impersonate-User"); len(impersonateUser) > 0 {
+	if impersonateUser := GetImpersonatingUser(h.Request); len(impersonateUser) > 0 {
 		ac := &authorizationv1.SubjectAccessReview{
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
@@ -77,11 +63,13 @@ func (h http) GetUserAndGroups() (username string, groups []string, err error) {
 		if !ac.Status.Allowed {
 			return "", nil, NewErrUnauthorized(fmt.Sprintf("the current user %s cannot impersonate the user %s", username, impersonateUser))
 		}
-		// The current user is allowed to perform authentication, allowing the override
-		username = impersonateUser
+		// Assign impersonate user after group impersonation with current user
+		defer func() {
+			username = impersonateUser
+		}()
 	}
 
-	if impersonateGroups := h.Request.Header.Values("Impersonate-Group"); len(impersonateGroups) > 0 {
+	if impersonateGroups := GetImpersonatingGroups(h.Request); len(impersonateGroups) > 0 {
 		for _, impersonateGroup := range impersonateGroups {
 			ac := &authorizationv1.SubjectAccessReview{
 				Spec: authorizationv1.SubjectAccessReviewSpec{
@@ -113,14 +101,13 @@ func (h http) GetUserAndGroups() (username string, groups []string, err error) {
 }
 
 func (h http) processBearerToken() (username string, groups []string, err error) {
-	token := h.bearerToken()
 	tr := &authenticationv1.TokenReview{
 		Spec: authenticationv1.TokenReviewSpec{
-			Token: token,
+			Token: h.bearerToken(),
 		},
 	}
 
-	if err = h.client.Create(context.Background(), tr); err != nil {
+	if err = h.client.Create(h.Request.Context(), tr); err != nil {
 		return "", nil, fmt.Errorf("cannot create TokenReview")
 	}
 
@@ -135,13 +122,44 @@ func (h http) bearerToken() string {
 	return strings.ReplaceAll(h.Header.Get("Authorization"), "Bearer ", "")
 }
 
-func (h http) getAuthType() authType {
-	switch {
-	case (h.TLS != nil) && len(h.TLS.PeerCertificates) > 0:
-		return certificateBased
-	case len(h.bearerToken()) > 0:
-		return bearerBased
-	default:
-		return anonymousBased
+type authenticationFn func() (username string, groups []string, err error)
+
+func (h http) authenticationFns() []authenticationFn {
+	fns := make([]authenticationFn, 0, len(h.authTypes)+1)
+
+	for _, authType := range h.authTypes {
+		//nolint:exhaustive
+		switch authType {
+		case BearerToken:
+			fns = append(fns, func() (username string, groups []string, err error) {
+				if len(h.bearerToken()) == 0 {
+					return "", nil, NewErrUnauthorized("unauthenticated users not supported")
+				}
+
+				return h.processBearerToken()
+			})
+		case TLSCertificate:
+			// If the proxy is handling a non TLS connection, we have to skip the authentication strategy,
+			// since the TLS section of the request would be nil.
+			if h.TLS == nil {
+				break
+			}
+
+			fns = append(fns, func() (username string, groups []string, err error) {
+				if pc := h.TLS.PeerCertificates; len(pc) == 0 {
+					err = NewErrUnauthorized("no provided peer certificates")
+				} else {
+					username, groups = pc[0].Subject.CommonName, pc[0].Subject.Organization
+				}
+
+				return
+			})
+		}
 	}
+	// Dead man switch, if no strategy worked, the proxy cannot work
+	fns = append(fns, func() (string, []string, error) {
+		return "", nil, NewErrUnauthorized("unauthenticated users not supported")
+	})
+
+	return fns
 }
