@@ -16,6 +16,7 @@ endif
 dlv-build:
 	docker build . --build-arg "GCFLAGS=all=-N -l" --tag clastix/capsule-proxy:dlv --target dlv
 
+dev-setup: kind capsule capsule-proxy
 
 docker/build:
 	@echo "Building docker image..."
@@ -71,6 +72,19 @@ ifeq ($(CAPSULE_PROXY_MODE),http)
 		--set "options.generateCertificates=false"
 else
 	@echo "Running in HTTPS mode"
+	$(MAKE) kubeconfigs
+	@echo "Installing Capsule-Proxy using HELM..."
+	@helm upgrade --install capsule-proxy ./charts/capsule-proxy -n capsule-system \
+		--set "image.pullPolicy=Never" \
+		--set "image.tag=latest" \
+		--set "service.type=NodePort" \
+		--set "service.nodePort=" \
+		--set "kind=DaemonSet" \
+		--set "daemonset.hostNetwork=true" \
+		--set "serviceMonitor.enabled=false"
+endif
+
+kubeconfigs:
 	@echo "capsule proxy certificates..."
 	cd hack && $(MKCERT) -install && $(MKCERT) 127.0.0.1 \
 		&& kubectl --namespace capsule-system create secret tls capsule-proxy --key=./127.0.0.1-key.pem --cert ./127.0.0.1.pem
@@ -92,18 +106,6 @@ else
 		&& mv dave-soil.kubeconfig dave.kubeconfig \
 		&& kubectl --kubeconfig=dave.kubeconfig config set clusters.kind-capsule.certificate-authority-data $$(cat $(ROOTCA) | base64 |tr -d '\n') \
 		&& kubectl --kubeconfig=dave.kubeconfig config set clusters.kind-capsule.server https://127.0.0.1:9001
-	@echo "Installing Capsule-Proxy using HELM..."
-	@helm upgrade --install capsule-proxy ./charts/capsule-proxy -n capsule-system \
-		--set "image.pullPolicy=Never" \
-		--set "image.tag=latest" \
-		--set "service.type=NodePort" \
-		--set "service.nodePort=" \
-		--set "kind=DaemonSet" \
-		--set "daemonset.hostNetwork=true" \
-		--set "serviceMonitor.enabled=false"
-endif
-
-dev-setup: kind capsule capsule-proxy
 
 rbac-fix:
 	@echo "RBAC customization..."

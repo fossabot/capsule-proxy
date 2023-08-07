@@ -250,11 +250,12 @@ func (n kubeFilter) registerModules(ctx context.Context, root *mux.Router) {
 					version = parts[1]
 				}
 
-				modList = append(modList, namespaced.List(schema.GroupVersionKind{
+				mod := namespaced.List(schema.GroupVersionKind{
 					Group:   group,
 					Version: version,
 					Kind:    resource.Name,
-				}, n.client))
+				}, n.client)
+				modList = append(modList, mod)
 			}
 		}
 	}
