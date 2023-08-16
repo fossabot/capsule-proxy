@@ -25,7 +25,7 @@ type CapsuleConfiguration struct {
 	DeprecatedCapsuleUserGroups []string
 }
 
-//nolint
+// nolint
 var CapsuleUserGroups sets.String
 
 func (c *CapsuleConfiguration) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {
@@ -54,6 +54,7 @@ func (c *CapsuleConfiguration) Reconcile(ctx context.Context, request reconcile.
 	capsuleConfig := &capsulev1beta2.CapsuleConfiguration{}
 
 	if err := c.client.Get(ctx, types.NamespacedName{Name: request.Name}, capsuleConfig); err != nil {
+		fmt.Sprintln(err, "Unable to retrieve CapsuleConfiguration")
 		panic(err)
 	}
 

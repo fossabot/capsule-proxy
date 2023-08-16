@@ -57,7 +57,7 @@ func (l list) Handle(proxyTenants []*tenant.ProxyTenant, proxyRequest request.Re
 
 	switch {
 	case len(sourceTenants) > 0:
-		r, err = labels.NewRequirement("name", selection.In, sourceTenants)
+		r, err = labels.NewRequirement("capsule.clastix.io/managed-by", selection.In, sourceTenants)
 	default:
 		r, err = labels.NewRequirement("dontexistsignoreme", selection.Exists, []string{})
 	}

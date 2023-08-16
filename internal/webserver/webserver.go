@@ -268,6 +268,7 @@ func (n *kubeFilter) registerModules(ctx context.Context, root *mux.Router) {
 					Version: version,
 					Kind:    resource.Name,
 				}, n.reader)
+				fmt.Println(mod.Path())
 				modList = append(modList, mod)
 			}
 		}
