@@ -52,7 +52,7 @@ func (c *CapsuleConfiguration) SetupWithManager(ctx context.Context, mgr ctrl.Ma
 
 func (c *CapsuleConfiguration) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 	capsuleConfig := &capsulev1beta2.CapsuleConfiguration{}
-
+	fmt.Println("bla %v", c.client)
 	if err := c.client.Get(ctx, types.NamespacedName{Name: request.Name}, capsuleConfig); err != nil {
 		fmt.Sprintln(err, "Unable to retrieve CapsuleConfiguration")
 		panic(err)

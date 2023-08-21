@@ -7,20 +7,20 @@ import (
 	capsulewebhook "github.com/clastix/capsule/pkg/webhook"
 )
 
-// +kubebuilder:webhook:path=/managed,mutating=true,sideEffects=None,admissionReviewVersions=v1,failurePolicy=fail,groups="*",resources=*,verbs=create;update,versions="*",name=managed.capsule.clastix.io
+// +kubebuilder:webhook:path=/namespaced,mutating=true,sideEffects=None,admissionReviewVersions=v1,failurePolicy=fail,groups="*",resources=*,verbs=create;update,versions="*",name=managed.capsule.clastix.io
 
-type managed struct {
+type namespaced struct {
 	handlers []capsulewebhook.Handler
 }
 
 func Managed(handler ...capsulewebhook.Handler) capsulewebhook.Webhook {
-	return &managed{handlers: handler}
+	return &namespaced{handlers: handler}
 }
 
-func (w *managed) GetHandlers() []capsulewebhook.Handler {
+func (w *namespaced) GetHandlers() []capsulewebhook.Handler {
 	return w.handlers
 }
 
-func (w *managed) GetPath() string {
-	return "/managed"
+func (w *namespaced) GetPath() string {
+	return "/namespaced"
 }

@@ -29,12 +29,7 @@ import (
 	"github.com/clastix/capsule-proxy/internal/indexer"
 	"github.com/clastix/capsule-proxy/internal/options"
 	"github.com/clastix/capsule-proxy/internal/request"
-	"github.com/clastix/capsule-proxy/internal/webhook/managed"
-	"github.com/clastix/capsule-proxy/internal/webhook/route"
 	"github.com/clastix/capsule-proxy/internal/webserver"
-	"github.com/clastix/capsule/pkg/webhook"
-	capsuleutils "github.com/clastix/capsule/pkg/webhook/utils"
-	utilVersion "k8s.io/apimachinery/pkg/util/version"
 )
 
 //nolint:funlen,cyclop
@@ -238,25 +233,25 @@ First match is used and can be specified multiple times as comma separated value
 		os.Exit(1)
 	}
 
-	var kubeVersion *utilVersion.Version
-
-	if kubeVersion, err = capsuleutils.GetK8sVersion(); err != nil {
-		log.Error(err, "unable to get kubernetes version")
-		os.Exit(1)
-	}
-
-	// webhooks: the order matters, don't change it and just append
-	webhooksList := append(
-		make([]webhook.Webhook, 0),
-		route.Managed(managed.Handler(kubeVersion)),
-	)
-
-	if err = webhook.Register(mgr, webhooksList...); err != nil {
-		log.Error(err, "unable to setup webhooks")
-		os.Exit(1)
-	}
-
-	log.Info("Starting the Manager")
+	//var kubeVersion *utilVersion.Version
+	//
+	//if kubeVersion, err = capsuleutils.GetK8sVersion(); err != nil {
+	//	log.Error(err, "unable to get kubernetes version")
+	//	os.Exit(1)
+	//}
+	//
+	//// webhooks: the order matters, don't change it and just append
+	//webhooksList := append(
+	//	make([]webhook.Webhook, 0),
+	//	route.Managed(namespaced.Handler(kubeVersion)),
+	//)
+	//
+	//if err = webhook.Register(mgr, webhooksList...); err != nil {
+	//	log.Error(err, "unable to setup webhooks")
+	//	os.Exit(1)
+	//}
+	//
+	//log.Info("Starting the Manager")
 
 	if err = mgr.Start(ctx); err != nil {
 		log.Error(err, "cannot start the Manager")
