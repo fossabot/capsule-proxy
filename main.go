@@ -211,6 +211,7 @@ First match is used and can be specified multiple times as comma separated value
 	log.Info("Adding the NamespaceFilter runner to the Manager")
 
 	if err = (&controllers.CapsuleConfiguration{
+		Client:                      mgr.GetClient(),
 		CapsuleConfigurationName:    capsuleConfigurationName,
 		DeprecatedCapsuleUserGroups: capsuleUserGroups,
 	}).SetupWithManager(ctx, mgr); err != nil {
