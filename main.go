@@ -26,6 +26,7 @@ import (
 
 	capsuleproxyv1beta1 "github.com/clastix/capsule-proxy/api/v1beta1"
 	"github.com/clastix/capsule-proxy/internal/controllers"
+	"github.com/clastix/capsule-proxy/internal/features"
 	"github.com/clastix/capsule-proxy/internal/indexer"
 	"github.com/clastix/capsule-proxy/internal/options"
 	"github.com/clastix/capsule-proxy/internal/request"
@@ -43,23 +44,18 @@ func main() {
 	utilruntime.Must(capsulev1beta2.AddToScheme(scheme))
 	utilruntime.Must(capsuleproxyv1beta1.AddToScheme(scheme))
 
-	var err error
-
-	var mgr ctrl.Manager
-
-	var certPath, keyPath, usernameClaimField, capsuleConfigurationName string
-
-	var capsuleUserGroups, ignoredUserGroups []string
-
-	var listeningPort uint
-
-	var bindSsl, disableCaching bool
-
-	var rolebindingsResyncPeriod time.Duration
-
-	var clientConnectionQPS float32
-
-	var clientConnectionBurst int32
+	var (
+		err                                                             error
+		mgr                                                             ctrl.Manager
+		certPath, keyPath, usernameClaimField, capsuleConfigurationName string
+		capsuleUserGroups, ignoredUserGroups                            []string
+		listeningPort                                                   uint
+		bindSsl, disableCaching                                         bool
+		rolebindingsResyncPeriod                                        time.Duration
+		clientConnectionQPS                                             float32
+		clientConnectionBurst                                           int32
+		featureGates                                                    FeatureGates
+	)
 
 	authTypes := []request.AuthType{
 		request.TLSCertificate,
@@ -70,6 +66,8 @@ func main() {
 		request.BearerToken:    {request.BearerToken.String()},
 		request.TLSCertificate: {request.TLSCertificate.String()},
 	}
+
+	featureGates
 
 	flag.StringVar(&capsuleConfigurationName, "capsule-configuration-name", "default", "Name of the CapsuleConfiguration used to retrieve the Capsule user groups names")
 	flag.StringSliceVar(&capsuleUserGroups, "capsule-user-group", []string{}, "Names of the groups for capsule users (deprecated: use capsule-configuration-name)")
@@ -86,6 +84,7 @@ First match is used and can be specified multiple times as comma separated value
 	flag.BoolVar(&disableCaching, "disable-caching", false, "Disable the go-client caching to hit directly the Kubernetes API Server, it disables any local caching as the rolebinding reflector (default: false)")
 	flag.Float32Var(&clientConnectionQPS, "client-connection-qps", 20.0, "QPS to use for interacting with kubernetes apiserver.")
 	flag.Int32Var(&clientConnectionBurst, "client-connection-burst", 30, "Burst to use for interacting with kubernetes apiserver.")
+	featureGates.BindFlags(flag.CommandLine)
 
 	opts := zap.Options{
 		EncoderConfigOptions: append([]zap.EncoderConfigOption{}, func(config *zapcore.EncoderConfig) {
@@ -100,6 +99,13 @@ First match is used and can be specified multiple times as comma separated value
 	flag.Parse()
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+
+	err := featureGates.WithLogger(setupLog).
+		features.SupportedFeatures(features.FeatureGates())
+	if err != nil {
+		setupLog.Error(err, "unable to load feature gates")
+		os.Exit(1)
+	}
 
 	log.Info("---")
 	log.Info(fmt.Sprintf("Manager listening on port %d", listeningPort))
